@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LUDO: PRESTIGE OPS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --cyan: #00ffff;
+            --red: #ff3e3e;
+            --green: #3eff3e;
+            --yellow: #ffff3e;
+            --blue: #3e3eff;
+            --gold: #ffcc00;
+            --glass: rgba(0, 0, 0, 0.7);
+            --border: rgba(0, 255, 255, 0.4);
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #05050a;
+            font-family: 'Rajdhani', sans-serif;
+            color: #fff;
+            user-select: none;
+        }
+
+        canvas { display: block; }
+
+        /* HUD LAYOUT */
+        #ui-overlay {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            z-index: 100;
+        }
+
+        .hud-panel {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            padding: 15px;
+            backdrop-filter: blur(12px);
+            pointer-events: auto;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+        }
+
+        .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
+        .flex-bottom { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; }
+
+        /* RADAR / MINIMAP */
+        .radar-container {
+            width: 180px;
+            height: 180px;
+            position: relative;
+            border: 2px solid var(--cyan);
+            overflow: hidden;
+        }
+        #radar-canvas { width: 100%; height: 100%; cursor: crosshair; }
+
+        /* DICE UI - 2D DISPLAY */
+        .dice-display {
+            width: 90px;
+            height: 90px;
+            background: #fdfdfd;
+            border-radius: 14px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            padding: 12px;
+            box-sizing: border-box;
+            gap: 6px;
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 2px solid #ccc;
+        }
+        .dot-2d {
+            background: #111;
+            border-radius: 50%;
+            visibility: hidden;
+            box-shadow: inset 1px 1px 2px rgba(255,255,255,0.2);
+        }
+        .dot-2d.active { visibility: visible; }
+
+        /* LABELS */
+        .tactical-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 700;
+            color: var(--cyan);
+            margin-bottom: 5px;
+            text-shadow: 0 0 5px rgba(0,255,255,0.5);
+        }
+
+        /* ROLL ACTION */
+        .roll-box {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+        }
+
+        .btn-strike {
+            background: rgba(0, 255, 255, 0.15);
+            border: 1px solid var(--cyan);
+            color: #fff;
+            padding: 15px 50px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            cursor: pointer;
+            transition: 0.3s;
+            display: none;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+        }
+
+        .btn-strike:hover {
+            background: rgba(0, 255, 255, 0.4);
+            box-shadow: 0 0 35px var(--cyan);
+            transform: translateY(-3px);
+        }
+
+        /* PLAYER STATUS */
+        .status-panel { display: flex; align-items: center; gap: 15px; min-width: 200px; }
+        .indicator-dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 20px currentColor; }
+
+        /* OVERLAYS */
+        #victory-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .vic-title { font-family: 'Bungee', sans-serif; font-size: 80px; color: var(--gold); margin: 0; }
+        
+        .fx-layer { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+        .vignette { background: radial-gradient(circle, transparent 50%, rgba(0,0,0,0.8) 100%); }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://esm.sh/three@0.160.0",
+        "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/"
+      }
+    }
+    </script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div class="fx-layer vignette"></div>
+
+    <div id="ui-overlay">
+        <div class="flex-row">
+            <div class="hud-panel radar-container">
+                <canvas id="radar-canvas" width="180" height="180"></canvas>
+            </div>
+            <div style="text-align: right; display: flex; flex-direction: column; align-items: flex-end;">
+                <div class="tactical-label">STRIKE OUTPUT</div>
+                <div id="dice-2d" class="dice-display">
+                    <div class="dot-2d" id="d1"></div><div class="dot-2d"></div><div class="dot-2d" id="d2"></div>
+                    <div class="dot-2d" id="d3"></div><div class="dot-2d" id="d4"></div><div class="dot-2d" id="d5"></div>
+                    <div class="dot-2d" id="d6"></div><div class="dot-2d"></div><div class="dot-2d" id="d7"></div>
+                </div>
+                <div class="tactical-label" style="margin-top: 10px; color: #fff; font-size: 10px; opacity: 0.7;">[ESC] RESET POV</div>
+            </div>
+        </div>
+
+        <div class="flex-bottom">
+            <div class="hud-panel status-panel">
+                <div id="active-dot" class="indicator-dot" style="background: var(--red); color: var(--red);"></div>
+                <div>
+                    <div class="tactical-label" style="font-size: 9px; margin-bottom: 2px;">Active Command</div>
+                    <div id="player-name" style="font-size: 22px; font-weight: 700; color: #fff;">STRIKER RED</div>
+                </div>
+            </div>
+
+            <div class="roll-box">
+                <button id="btn-roll" class="btn-strike">ENGAGE STRIKE [SPACE]</button>
+            </div>
+
+            <div class="hud-panel" style="text-align: right; min-width: 140px;">
+                <div class="tactical-label" style="font-size: 9px; margin-bottom: 2px;">Units Active</div>
+                <div id="unit-stats" style="font-size: 32px; font-weight: 700; color: #fff;">0 / 4</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="victory-modal">
+        <h1 class="vic-title">MISSION COMPLETE</h1>
+        <p id="winner-info" style="font-size: 24px; letter-spacing: 5px; margin: 20px 0 40px; color: #fff;"></p>
+        <button onclick="location.reload()" class="btn-strike" style="display: block;">REDEPLOY</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- CONSTANTS ---
+        const GRID_SIZE = 15;
+        const CELL = 3.0; 
+        const COLORS = ['RED', 'GREEN', 'YELLOW', 'BLUE'];
+        const HEX = { RED: 0xff1111, GREEN: 0x11ff11, YELLOW: 0xffff11, BLUE: 0x1111ff, GOLD: 0xffaa00 };
+        
+        const PATH_MAP = [
+            {x:6,y:13},{x:6,y:12},{x:6,y:11},{x:6,y:10},{x:6,y:9},{x:5,y:9},{x:4,y:9},{x:3,y:9},{x:2,y:9},{x:1,y:9},{x:0,y:9},
+            {x:0,y:8},{x:0,y:7},{x:0,y:6},{x:1,y:6},{x:2,y:6},{x:3,y:6},{x:4,y:6},{x:5,y:6},{x:6,y:5},{x:6,y:4},{x:6,y:3},
+            {x:6,y:2},{x:6,y:1},{x:6,y:0},{x:7,y:0},{x:8,y:0},{x:9,y:0},{x:9,y:1},{x:9,y:2},{x:9,y:3},{x:9,y:4},{x:9,y:5},
+            {x:10,y:6},{x:11,y:6},{x:12,y:6},{x:13,y:6},{x:14,y:6},{x:14,y:7},{x:14,y:8},{x:14,y:9},{x:13,y:9},{x:12,y:9},
+            {x:11,y:9},{x:10,y:9},{x:9,y:9},{x:9,y:10},{x:9,y:11},{x:9,y:12},{x:9,y:13},{x:9,y:14},{x:8,y:14},{x:7,y:14}
+        ];
+
+        const STARTS = { RED: 1, GREEN: 14, YELLOW: 27, BLUE: 40 };
+        const SAFE_ZONES = [0, 8, 13, 21, 26, 34, 39, 47];
+
+        const HOME_STRETCHES = {
+            RED:    [{x:7,y:13},{x:7,y:12},{x:7,y:11},{x:7,y:10},{x:7,y:9},{x:7,y:8}],
+            BLUE:   [{x:13,y:7},{x:12,y:7},{x:11,y:7},{x:10,y:7},{x:9,y:7},{x:8,y:7}],
+            YELLOW: [{x:7,y:1},{x:7,y:2},{x:7,y:3},{x:7,y:4},{x:7,y:5},{x:7,y:6}],
+            GREEN:  [{x:1,y:7},{x:2,y:7},{x:3,y:7},{x:4,y:7},{x:5,y:7},{x:6,y:7}]
+        };
+
+        const BASES = {
+            RED:    [{x:1,y:10},{x:3,y:10},{x:1,y:12},{x:3,y:12}],
+            GREEN:  [{x:1,y:2},{x:3,y:2},{x:1,y:4},{x:3,y:4}],
+            YELLOW: [{x:11,y:2},{x:13,y:2},{x:11,y:4},{x:13,y:4}],
+            BLUE:   [{x:11,y:10},{x:13,y:10},{x:11,y:12},{x:13,y:12}]
+        };
+
+        // --- GAME ENGINE STATE ---
+        const state = {
+            players: COLORS.map(c => ({
+                color: c,
+                tokens: [1,2,3,4].map(id => ({ id, color: c, position: -1, done: false, mesh: null }))
+            })),
+            turn: 0,
+            diceValue: 1,
+            rolling: false,
+            phase: 'DICE',
+            povUnit: null,
+            camPos: new THREE.Vector3(),
+            camLook: new THREE.Vector3()
+        };
+
+        const audio = {
+            roll: new Audio('https://assets.mixkit.co/active_storage/sfx/2006/2006-preview.mp3'),
+            move: new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'),
+            clash: new Audio('https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3'),
+            victory: new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3')
+        };
+        Object.values(audio).forEach(a => a.volume = 0.35);
+
+        // --- THREE.JS INITIALIZATION ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a15);
+        scene.fog = new THREE.FogExp2(0x0a0a15, 0.005); 
+
+        const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.maxPolarAngle = Math.PI / 2.2;
+
+        const ambient = new THREE.AmbientLight(0xffffff, 0.85); 
+        scene.add(ambient);
+        
+        const hemi = new THREE.HemisphereLight(0x77bbff, 0x111133, 0.6);
+        scene.add(hemi);
+
+        const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+        sun.position.set(-40, 80, 40);
+        sun.castShadow = true;
+        sun.shadow.mapSize.set(1024, 1024);
+        scene.add(sun);
+
+        const toWorld = (x, y, z = 0) => new THREE.Vector3((x*CELL)-(GRID_SIZE*CELL/2)+CELL/2, z, (y*CELL)-(GRID_SIZE*CELL/2)+CELL/2);
+
+        const getCoords = (t) => {
+            if (t.position === -1) return BASES[t.color][t.id - 1];
+            if (t.position >= 52) return HOME_STRETCHES[t.color][t.position - 52];
+            return PATH_MAP[(t.position + STARTS[t.color]) % 52];
+        };
+
+        // --- BOARD GENERATION ---
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x050510 }));
+        ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+        scene.add(ground);
+
+        for (let x=0; x<GRID_SIZE; x++) {
+            for (let y=0; y<GRID_SIZE; y++) {
+                const isPath = (x>=6 && x<=8) || (y>=6 && y<=8);
+                const isBase = (x<6 && y<6) || (x<6 && y>8) || (x>8 && y<6) || (x>8 && y>8);
+                const isCenter = x>5 && x<9 && y>5 && y<9;
+                if (!isPath && !isBase && !isCenter) continue;
+
+                let c = 0x2a2a3a;
+                let emissive = 0x000000;
+                let intensity = 0;
+
+                // Color Tiles
+                if (x<6 && y>8) { c = 0xcc3333; emissive = c; intensity = 0.2; } 
+                else if (x<6 && y<6) { c = 0x33cc33; emissive = c; intensity = 0.2; } 
+                else if (x>8 && y<6) { c = 0xcccc33; emissive = c; intensity = 0.2; } 
+                else if (x>8 && y>8) { c = 0x3333cc; emissive = c; intensity = 0.2; } 
+
+                if (x===7 && y>8 && y<14) { c = 0xff2222; emissive = c; intensity = 0.4; } 
+                if (y===7 && x>0 && x<6) { c = 0x22ff22; emissive = c; intensity = 0.4; }
+                if (x===7 && y>0 && y<6) { c = 0xffff22; emissive = c; intensity = 0.4; }
+                if (y===7 && x>8 && x<14) { c = 0x2222ff; emissive = c; intensity = 0.4; }
+                
+                const isSafe = (x===6 && y===12) || (x===2 && y===6) || (x===8 && y===2) || (x===12 && y===8);
+                if (isSafe) { c = 0xffffff; emissive = 0xaaaaaa; intensity = 0.6; }
+
+                if (isCenter) { c = 0xffcc00; emissive = 0xffcc00; intensity = 0.9; }
+
+                const tile = new THREE.Mesh(
+                    new THREE.BoxGeometry(CELL * 0.95, 0.5, CELL * 0.95),
+                    new THREE.MeshStandardMaterial({ color: c, emissive, emissiveIntensity: intensity, metalness: 0.4, roughness: 0.4 })
+                );
+                tile.position.copy(toWorld(x, y, 0.25));
+                tile.receiveShadow = true;
+                scene.add(tile);
+            }
+        }
+
+        const lightShower = new THREE.Mesh(
+            new THREE.CylinderGeometry(CELL*1.5, CELL*1.5, 60, 32, 1, true),
+            new THREE.MeshBasicMaterial({ 
+                color: 0xffcc00, transparent: true, opacity: 0.1, 
+                blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+            })
+        );
+        lightShower.position.set(0, 30, 0);
+        scene.add(lightShower);
+
+        // --- PLAYER UNITS ---
+        const createUnit = (colorHex) => {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.3, 5, 16), new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.9, roughness: 0.2 }));
+            const core = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 4.2, 8), new THREE.MeshStandardMaterial({ color: colorHex, emissive: colorHex, emissiveIntensity: 3.5 }));
+            core.position.y = 1.3;
+            group.add(body, core);
+            group.castShadow = true;
+            return group;
+        };
+
+        state.players.forEach(p => {
+            p.tokens.forEach(t => {
+                const mesh = createUnit(HEX[t.color]);
+                mesh.userData = { id: t.id, color: t.color, type: 'token' };
+                t.mesh = mesh;
+                scene.add(mesh);
+                const pos = getCoords(t);
+                mesh.position.copy(toWorld(pos.x, pos.y, 3));
+            });
+        });
+
+        // --- 3D DICE ---
+        const diceGroup = new THREE.Group();
+        const diceBody = new THREE.Mesh(new THREE.BoxGeometry(3.6, 3.6, 3.6), new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.1, roughness: 0.1 }));
+        diceGroup.add(diceBody);
+        const diceDots = (val, side) => {
+            const pMap = { 1:[[0,0,1.85]], 2:[[-0.8,0.8,1.85],[0.8,-0.8,1.85]], 3:[[-0.8,0.8,1.85],[0,0,1.85],[0.8,-0.8,1.85]], 4:[[-0.8,0.8,1.85],[0.8,0.8,1.85],[-0.8,-0.8,1.85],[0.8,-0.8,1.85]], 5:[[-0.8,0.8,1.85],[0.8,0.8,1.85],[0,0,1.85],[-0.8,-0.8,1.85],[0.8,-0.8,1.85]], 6:[[-0.8,0.8,1.85],[0.8,0.8,1.85],[-0.8,0,1.85],[0.8,0,1.85],[-0.8,-0.8,1.85],[0.8,-0.8,1.85]] };
+            const rMap = { 1:[0,0,0], 2:[0,Math.PI/2,0], 3:[0,Math.PI,0], 4:[0,-Math.PI/2,0], 5:[Math.PI/2,0,0], 6:[-Math.PI/2,0,0] };
+            const g = new THREE.Group();
+            const dGeo = new THREE.SphereGeometry(0.28, 16, 16); const dMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            pMap[val].forEach(p => { const d = new THREE.Mesh(dGeo, dMat); d.position.set(...p); g.add(d); });
+            g.rotation.set(...rMap[side]); diceGroup.add(g);
+        };
+        for(let i=1; i<=6; i++) diceDots(i, i);
+        diceGroup.position.set(0, 8, 0);
+        scene.add(diceGroup);
+
+        // --- ACTIONS & UI SYNC ---
+        const updateDiceUI = (v) => {
+            const dots = document.querySelectorAll('.dot-2d');
+            dots.forEach(d => d.classList.remove('active'));
+            const map = {
+                1: ['d4'], 2: ['d1', 'd7'], 3: ['d1', 'd4', 'd7'],
+                4: ['d1', 'd2', 'd6', 'd7'], 5: ['d1', 'd2', 'd4', 'd6', 'd7'],
+                6: ['d1', 'd2', 'd3', 'd5', 'd6', 'd7']
+            };
+            if (map[v]) map[v].forEach(id => document.getElementById(id).classList.add('active'));
+            const d2d = document.getElementById('dice-2d');
+            d2d.style.transform = 'scale(1.15) rotate(5deg)';
+            setTimeout(() => d2d.style.transform = 'scale(1) rotate(0deg)', 200);
+        };
+
+        const roll = () => {
+            if (state.phase !== 'DICE' || state.rolling) return;
+            state.rolling = true; audio.roll.play().catch(()=>{});
+            setTimeout(() => {
+                const val = Math.floor(Math.random() * 6) + 1;
+                state.diceValue = val; state.rolling = false;
+                updateDiceUI(val);
+                
+                // Rotations based on pips facing camera/up (1: top, etc)
+                const rot = { 
+                    1: [0,0,0], 
+                    2: [0,-Math.PI/2,0], 
+                    3: [0,Math.PI,0], 
+                    4: [0,Math.PI/2,0], 
+                    5: [-Math.PI/2,0,0], 
+                    6: [Math.PI/2,0,0] 
+                }[val];
+                diceGroup.rotation.set(...rot);
+
+                const p = state.players[state.turn];
+                const canMove = p.tokens.some(t => {
+                    if (t.done) return false;
+                    if (t.position === -1) return val === 6;
+                    if (t.position + val > 57) return false;
+                    return true;
+                });
+
+                if (canMove) {
+                    state.phase = 'MOVE';
+                } else {
+                    // No moves possible, turn rotates unless it was a 6 (ludo rules differ, usually no move = next turn)
+                    // In strict ludo, rolling a 6 with no possible move still grants a 6? 
+                    // Usually you rotate if no moves are possible even on a 6.
+                    setTimeout(nextTurn, 1000);
+                }
+                updateUI();
+            }, 800);
+        };
+
+        const moveToken = (t) => {
+            const v = state.diceValue;
+            let startJump = false;
+            
+            if (t.position === -1) {
+                if (v !== 6) return;
+                t.position = 0;
+                startJump = true;
+            } else {
+                if (t.position + v > 57) return; // Exact roll needed
+                t.position += v;
+            }
+            
+            audio.move.play().catch(()=>{});
+            if (t.position === 57) t.done = true;
+            
+            const myC = getCoords(t); 
+            let clash = false;
+            state.players.forEach(p => {
+                if (p.color === t.color) return;
+                p.tokens.forEach(ot => {
+                    if (ot.position === -1 || ot.done) return;
+                    const oc = getCoords(ot);
+                    // Check safe zone logic
+                    const isSafeSpot = SAFE_ZONES.some(sz => {
+                        const spot = PATH_MAP[(sz + STARTS[ot.color]) % 52];
+                        return spot.x === oc.x && spot.y === oc.y;
+                    }) || t.position >= 52;
+
+                    if (oc.x === myC.x && oc.y === myC.y && !isSafeSpot) {
+                        ot.position = -1; clash = true;
+                    }
+                });
+            });
+
+            if (clash) audio.clash.play().catch(()=>{});
+
+            // Check Win Condition
+            if (state.players[state.turn].tokens.every(tk => tk.done)) {
+                state.winner = state.players[state.turn].color;
+                document.getElementById('victory-modal').style.display = 'flex';
+                document.getElementById('winner-info').textContent = `STRIKER ${state.winner} HAS DOMINATED THE GRID`;
+                audio.victory.play().catch(()=>{});
+                return;
+            }
+
+            // Ludo Rules: 6 or Capture gives another turn
+            if (v === 6 || clash) {
+                state.phase = 'DICE';
+                state.diceValue = null;
+            } else {
+                nextTurn();
+            }
+            updateUI();
+        };
+
+        const nextTurn = () => {
+            state.turn = (state.turn + 1) % 4; 
+            state.phase = 'DICE'; 
+            state.diceValue = null;
+            snapPOV(COLORS[state.turn]); 
+            updateUI();
+        };
+
+        const snapPOV = (c) => {
+            const pos = { RED: [0,35,65], GREEN: [-65,35,0], YELLOW: [0,35,-65], BLUE: [65,35,0] };
+            const look = { RED: [0,0,10], GREEN: [-10,0,0], YELLOW: [0,0,-10], BLUE: [10,0,0] };
+            state.camPos = new THREE.Vector3(...pos[c]);
+            state.camLook = new THREE.Vector3(...look[c]);
+            state.povUnit = null;
+        };
+
+        const focusOnUnit = (unitMesh) => {
+            state.povUnit = unitMesh;
+            const p = unitMesh.position.clone();
+            state.camPos = new THREE.Vector3(p.x, 20, p.z + 20);
+            state.camLook = p;
+        };
+
+        const updateUI = () => {
+            const p = state.players[state.turn];
+            document.getElementById('player-name').textContent = `STRIKER ${p.color}`;
+            const dot = document.getElementById('active-dot');
+            dot.style.background = COLORS[state.turn].toLowerCase();
+            dot.style.color = COLORS[state.turn].toLowerCase();
+            document.getElementById('unit-stats').textContent = `${p.tokens.filter(t=>t.position!==-1 && !t.done).length} / 4`;
+            document.getElementById('btn-roll').style.display = (state.phase==='DICE' && !state.rolling) ? 'block' : 'none';
+        };
+
+        const drawRadar = () => {
+            const ctx = document.getElementById('radar-canvas').getContext('2d');
+            const s = 180 / 15;
+            ctx.clearRect(0,0,180,180);
+
+            // Minimap Tiles: Neutralized Base Quadrants, Preserved Center Cross
+            for (let x=0; x<GRID_SIZE; x++) {
+                for (let y=0; y<GRID_SIZE; y++) {
+                    const isPath = (x>=6 && x<=8) || (y>=6 && y<=8);
+                    const isBase = (x<6 && y<6) || (x<6 && y>8) || (x>8 && y<6) || (x>8 && y>8);
+                    const isCenter = x>5 && x<9 && y>5 && y<9;
+                    if (!isPath && !isBase && !isCenter) continue;
+
+                    let c = '#111122'; // Base dark neutral
+
+                    // Preservation of middle cross (home stretches)
+                    if (x===7 && y>8 && y<14) c = '#ff2222';
+                    if (y===7 && x>0 && x<6) c = '#22ff22';
+                    if (x===7 && y>0 && y<6) c = '#ffff22';
+                    if (y===7 && x>8 && x<14) c = '#2222ff';
+                    
+                    if (isCenter) c = '#ffaa00';
+
+                    ctx.fillStyle = c;
+                    ctx.fillRect(x*s, y*s, s, s);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                    ctx.strokeRect(x*s, y*s, s, s);
+                }
+            }
+
+            // Units on Minimap: The representation of the color is now the dots themselves
+            state.players.forEach(p => p.tokens.forEach(t => {
+                if (t.done) return;
+                const c = getCoords(t);
+                ctx.fillStyle = p.color.toLowerCase();
+                ctx.beginPath();
+                ctx.arc(c.x*s+s/2, c.y*s+s/2, 5, 0, 7);
+                ctx.fill();
+                
+                if (t.mesh === state.povUnit) {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(c.x*s-1, c.y*s-1, s+2, s+2);
+                }
+            }));
+        };
+
+        // --- ANIMATION LOOP ---
+        const clock = new THREE.Clock();
+        const loop = () => {
+            requestAnimationFrame(loop);
+            const dt = clock.getDelta();
+
+            state.players.forEach(p => p.tokens.forEach(t => {
+                const c = getCoords(t); 
+                t.mesh.position.lerp(toWorld(c.x, c.y, t.done ? -15 : 3), 0.12);
+                const active = state.phase === 'MOVE' && p.color === COLORS[state.turn] && (t.position === -1 ? state.diceValue === 6 : t.position + state.diceValue <= 57);
+                t.mesh.children[1].material.emissiveIntensity = active ? (4.5 + Math.sin(Date.now()*0.012)*2) : 1.8;
+            }));
+
+            lightShower.rotation.y += dt * 0.3;
+            lightShower.material.opacity = 0.08 + Math.sin(Date.now()*0.003)*0.04;
+
+            if (state.rolling) { 
+                diceGroup.rotation.x += 3.5; diceGroup.rotation.y += 1.8; 
+                diceGroup.position.y = 10 + Math.sin(Date.now()*0.03)*5; 
+            } else { 
+                diceGroup.position.y = THREE.MathUtils.lerp(diceGroup.position.y, 7, 0.1); 
+            }
+
+            if (state.camPos.length() > 0) {
+                camera.position.lerp(state.camPos, 0.07);
+                controls.target.lerp(state.camLook, 0.07);
+            }
+            controls.update();
+
+            drawRadar();
+            renderer.render(scene, camera);
+        };
+
+        // --- INPUTS ---
+        window.onkeydown = (e) => { 
+            if(e.code==='Space') roll(); 
+            if(e.code==='Escape') snapPOV(COLORS[state.turn]);
+        };
+        document.getElementById('btn-roll').onclick = roll;
+        window.onresize = () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+        
+        window.onclick = (e) => {
+            const m = new THREE.Vector2((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
+            const r = new THREE.Raycaster(); r.setFromCamera(m, camera);
+            const hits = r.intersectObjects(scene.children, true);
+            if (hits.length > 0) {
+                let obj = hits[0].object; while(obj.parent && !obj.userData.type) obj = obj.parent;
+                if (obj.userData?.type === 'token') {
+                    const t = state.players.find(p=>p.color===obj.userData.color).tokens.find(tk=>tk.id===obj.userData.id);
+                    if (state.phase==='MOVE' && t.color===COLORS[state.turn]) moveToken(t);
+                    else focusOnUnit(obj);
+                }
+            }
+        };
+
+        // Radar Interaction: Focus on unit via minimap click
+        document.getElementById('radar-canvas').onmousedown = (e) => {
+            const rect = e.target.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            const s = 180 / 15;
+            
+            state.players.forEach(p => p.tokens.forEach(t => {
+                const c = getCoords(t);
+                const dx = (c.x * s + s/2) - mx;
+                const dy = (c.y * s + s/2) - my;
+                if (Math.hypot(dx, dy) < 10) {
+                    focusOnUnit(t.mesh);
+                }
+            }));
+        };
+
+        snapPOV('RED'); updateUI(); updateDiceUI(1); loop();
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
